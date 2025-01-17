@@ -1,5 +1,5 @@
 import * as React from "react";
-import { mount, unmount } from "svelte";
+import { mount, unmount, type Component } from "svelte";
 import { render } from "svelte/server";
 import type { SvelteEventHandlers } from "./internal/types";
 import SvelteToReactContext from "./internal/SvelteToReactContext.js";
@@ -16,21 +16,54 @@ export type SvelteConstructor<Props = any, Events = any, Slot = any> = {
     $$slot_def: Slot;
   };
 };
+
+type OnSvelteComponentCreate<Exports> = {
+  onSvelteComponentConstruct?: (exports: Exports) => any;
+};
+
+type RestrictedSvelteProps = Record<
+  keyof OnSvelteComponentCreate<any>,
+  never
+> & { children?: never };
+
+type Reactified<Props> = React.FunctionComponent<
+  Props & { children?: React.ReactNode }
+>;
+
+type PropsFromSvelteComponent<T extends Component | SvelteConstructor> =
+  T extends Component<infer Props>
+    ? Props
+    : T extends SvelteConstructor<infer Props>
+      ? Props
+      : never;
+
 /**
  * Convert a Svelte component into a React component.
  */
-export default function reactify<P = any, E = any>(
-  SvelteComponent: SvelteConstructor<P, E>,
-): React.FunctionComponent<
-  | (P & SvelteEventHandlers<E> & { children?: React.ReactNode })
-  | { children?: React.ReactNode }
-> {
+export default function reactify<
+  T extends
+    | Component<RestrictedSvelteProps>
+    | SvelteConstructor<RestrictedSvelteProps>,
+>(
+  SvelteComponent: T,
+): T extends Component<infer Props, infer Exports>
+  ? Props extends Record<string, never>
+    ? Reactified<OnSvelteComponentCreate<Exports>>
+    : Reactified<Props & OnSvelteComponentCreate<Exports>>
+  : T extends SvelteConstructor<infer Props, infer Events>
+    ? Reactified<Props & SvelteEventHandlers<Events>>
+    : never {
   const { name } = SvelteComponent as any;
+  type Props = PropsFromSvelteComponent<T>;
   const named = {
     [name](options: any) {
-      const { children, ...props } = options;
+      const { children, onSvelteComponentConstruct, ...props } =
+        options as OnSvelteComponentCreate<any> & {
+          children?: React.ReactNode;
+        } & Props;
+
       const wrapperRef = React.useRef<HTMLElement>();
-      const sveltePropsRef = React.useRef<(props: P) => void>();
+      const sveltePropsRef = React.useRef<(props: Props) => void>();
       const svelteChildrenRef = React.useRef<HTMLElement>();
       const reactChildrenRef = React.useRef<HTMLElement>();
       const node = React.useContext(SvelteToReactContext);
@@ -46,6 +79,7 @@ export default function reactify<P = any, E = any>(
           target,
           props: {
             SvelteComponent: SvelteComponent as any,
+            onWrappedMounted: onSvelteComponentConstruct,
             nodeKey: key,
             react$children: children,
             props,
@@ -68,7 +102,7 @@ export default function reactify<P = any, E = any>(
       // Sync props & events
       React.useEffect(() => {
         if (sveltePropsRef.current) {
-          sveltePropsRef.current(props);
+          sveltePropsRef.current(props as Props);
         }
       }, [props, sveltePropsRef]);
 
@@ -100,7 +134,7 @@ export default function reactify<P = any, E = any>(
           $$payload.out = $$payload.out.slice(0, len);
         } else {
           const result = render(SvelteComponent as any, {
-            props,
+            props: props as Props,
             context,
           });
           html = result.html;
@@ -147,7 +181,7 @@ export default function reactify<P = any, E = any>(
       );
     },
   };
-  return named[name];
+  return named[name] as any;
 }
 
 export function setPayload(payload: any) {
