@@ -1,5 +1,5 @@
 {
-  "name": "svelte-preprocess-react",
+  "name": "@p-buddy/svelte-preprocess-react",
   "description": "Seamlessly use React components inside a Svelte app",
   "keywords": [
     "svelte",
