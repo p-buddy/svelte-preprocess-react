@@ -17,14 +17,13 @@ export type SvelteConstructor<Props = any, Events = any, Slot = any> = {
   };
 };
 
-type OnSvelteComponentCreate<Exports> = {
-  onSvelteComponentConstruct?: (exports: Exports) => any;
-};
+type PathToValue<P extends string, V> = P extends `${infer Key}.${infer Rest}`
+  ? { [K in Key]: PathToValue<Rest, V> }
+  : { [K in P]: V };
 
-type RestrictedSvelteProps = Record<
-  keyof OnSvelteComponentCreate<any>,
-  never
-> & { children?: never };
+type RestrictedSvelteProps<MountPath extends string | undefined> = MountPath extends string
+  ? Partial<PathToValue<MountPath, never>> & { children?: never }
+  : { children?: never };
 
 type Reactified<Props> = React.FunctionComponent<
   Props & { children?: React.ReactNode }
@@ -32,33 +31,41 @@ type Reactified<Props> = React.FunctionComponent<
 
 type PropsFromSvelteComponent<T extends Component | SvelteConstructor> =
   T extends Component<infer Props>
-    ? Props
-    : T extends SvelteConstructor<infer Props>
-      ? Props
-      : never;
+  ? Props
+  : T extends SvelteConstructor<infer Props>
+  ? Props
+  : never;
 
 /**
  * Convert a Svelte component into a React component.
  */
 export default function reactify<
   T extends
-    | Component<RestrictedSvelteProps>
-    | SvelteConstructor<RestrictedSvelteProps>,
+  | Component<RestrictedSvelteProps<MountPath>>
+  | SvelteConstructor<RestrictedSvelteProps<MountPath>>,
+  MountPath extends string | undefined = undefined,
 >(
   SvelteComponent: T,
+  mountFunctionPath?: MountPath,
 ): T extends Component<infer Props, infer Exports>
   ? Props extends Record<string, never>
-    ? Reactified<OnSvelteComponentCreate<Exports>>
-    : Reactified<Props & OnSvelteComponentCreate<Exports>>
+  ? Reactified<MountPath extends string ? PathToValue<MountPath, (exports: Exports) => any> : {}>
+  : Reactified<Props & (MountPath extends string ? PathToValue<MountPath, (exports: Exports) => any> : {})>
   : T extends SvelteConstructor<infer Props, infer Events>
-    ? Reactified<Props & SvelteEventHandlers<Events>>
-    : never {
+  ? Reactified<Props & SvelteEventHandlers<Events>>
+  : never {
   const { name } = SvelteComponent as any;
   type Props = PropsFromSvelteComponent<T>;
+
+  const getMountFunction = (options: any): ((exports: any) => any) | undefined => {
+    if (!mountFunctionPath) return undefined;
+    return mountFunctionPath.split('.').reduce((obj, key) => obj?.[key], options);
+  };
+
   const named = {
     [name](options: any) {
-      const { children, onSvelteComponentConstruct, ...props } =
-        options as OnSvelteComponentCreate<any> & {
+      const { children, ...props } =
+        options as {
           children?: React.ReactNode;
         } & Props;
 
@@ -79,7 +86,7 @@ export default function reactify<
           target,
           props: {
             SvelteComponent: SvelteComponent as any,
-            onWrappedMounted: onSvelteComponentConstruct,
+            onWrappedMounted: getMountFunction(options),
             nodeKey: key,
             react$children: children,
             props,
@@ -147,15 +154,15 @@ export default function reactify<
           }),
           ...(children
             ? [
-                React.createElement(
-                  "react-children",
-                  {
-                    node: key,
-                    style: { display: "none" },
-                  },
-                  children,
-                ),
-              ]
+              React.createElement(
+                "react-children",
+                {
+                  node: key,
+                  style: { display: "none" },
+                },
+                children,
+              ),
+            ]
             : []),
         ];
       }
@@ -169,14 +176,14 @@ export default function reactify<
         },
         children
           ? React.createElement(
-              "react-children",
-              {
-                ref: reactChildrenRef,
-                node: key,
-                style: { display: "none" },
-              },
-              children,
-            )
+            "react-children",
+            {
+              ref: reactChildrenRef,
+              node: key,
+              style: { display: "none" },
+            },
+            children,
+          )
           : undefined,
       );
     },
